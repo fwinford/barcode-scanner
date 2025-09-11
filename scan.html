@@ -8,32 +8,35 @@
   </head>
   <body>
     <div class="container">
-      <h1><span class="icon-package"></span>Package Tracking Scanner</h1>
-      
-      <div id="status">Loading...</div>
-      
-      <div class="input-group">
-        <label for="cams"><span class="icon-camera"></span>Select Camera (iPhone via Continuity Camera):</label>
-        <select id="cams">
-          <option>Loading cameras...</option>
-        </select>
+      <div class="header-card">
+        <h1><span class="icon-package"></span>Package Tracking Scanner</h1>
+        <p class="header-subtitle">Scan barcodes with your iPhone camera or upload images</p>
       </div>
       
-      <div class="button-group">
-        <button id="startBtn" disabled><span class="icon-camera"></span>Start Camera</button>
-        <button id="stopBtn" class="secondary" disabled>Stop Camera</button>
-      </div>
+      <div id="status">Ready to scan</div>
       
-      <div class="file-input-wrapper">
-        <input type="file" id="fileInput" accept="image/*" capture="environment">
-        <div class="file-input-label">
-          <span class="icon-upload"></span>Upload Image from iPhone
+      <section class="card">
+        <h3>Scan a Barcode</h3>
+
+        <div id="sourceControls" class="button-group">
+          <button id="startCameraBtn"><span class="icon-camera"></span>Use Camera</button>
+          <label class="file-input-label">
+            <input id="uploadInput" type="file" accept="image/*" />
+            <span class="icon-upload"></span>Upload Image
+          </label>
         </div>
-      </div>
-      
-      <div class="video-container">
-        <video id="preview" playsinline muted></video>
-      </div>
+
+        <div id="previewArea">
+          <!-- Only one of these is visible at a time -->
+          <video id="previewVideo" class="hidden" autoplay playsinline muted></video>
+          <canvas id="previewCanvas" class=""></canvas>
+          <div id="cropOverlay" class="crop-overlay hidden"></div>
+        </div>
+
+        <div id="actions" class="button-group">
+          <button id="resetBtn" class="secondary"><span class="icon-refresh"></span>Reset</button>
+        </div>
+      </section>
       
       <div id="result" class="hidden"></div>
       
@@ -43,6 +46,6 @@
       </details>
     </div>
     
-    <script type="module" src="scanner.js"></script>
+    <script type="module" src="app.js"></script>
   </body>
 </html>

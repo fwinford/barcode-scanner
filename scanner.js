@@ -230,6 +230,10 @@ async function initScanner() {
       BarcodeFormat.CODE_93,
       BarcodeFormat.CODABAR,
       BarcodeFormat.ITF,
+      BarcodeFormat.EAN_13,
+      BarcodeFormat.EAN_8,
+      BarcodeFormat.UPC_A,
+      BarcodeFormat.UPC_E,
       BarcodeFormat.QR_CODE,
       BarcodeFormat.DATA_MATRIX
     ]);
@@ -244,7 +248,7 @@ async function initScanner() {
     try {
       if ('BarcodeDetector' in window) {
         const supported = await BarcodeDetector.getSupportedFormats();
-        const wanted = ['code_128','code_39','code_93','itf','codabar','ean_13','ean_8','upc_a','upc_e','data_matrix','qr_code'];
+        const wanted = ['code_128','code_39','code_93','itf','codabar','ean_13','ean_8','upc_a','upc_e','qr_code','data_matrix'];
         const formats = wanted.filter(f => supported.includes(f));
         if (formats.length) {
           nativeDetector = new BarcodeDetector({ formats });
@@ -280,6 +284,16 @@ async function initScanner() {
     
     statusEl.textContent = 'Cameras loaded. Select camera and click Start.';
     startBtn.disabled = false;
+    
+    // Initialize manual crop UI
+    try {
+      initCropUI();
+      log('Manual crop UI initialization completed');
+    } catch (cropInitError) {
+      log(`ERROR initializing crop UI: ${cropInitError.message}`);
+    }
+    
+
     
   } catch (error) {
     log(`Init error: ${error.message}`);
@@ -345,8 +359,12 @@ async function startDecoding(deviceId) {
 
           const barcodes = await nativeDetector.detect(canvas);
           if (barcodes && barcodes.length) {
-            // Prefer the longest rawValue (often the tracking barcode)
-            const best = barcodes.sort((a,b)=> (b.rawValue?.length||0)-(a.rawValue?.length||0))[0];
+            // Prefer any barcode that contains an Amazon TBA tracking string
+            let best = barcodes.find(b => /^TBA\d+/i.test((b.rawValue||'').trim()));
+            if (!best) {
+              // Prefer the longest rawValue (often the tracking barcode)
+              best = barcodes.sort((a,b)=> (b.rawValue?.length||0)-(a.rawValue?.length||0))[0];
+            }
             const text = (best?.rawValue || '').trim();
             if (text) {
               log(`Native detected: ${text}`);
@@ -450,7 +468,36 @@ async function decodeFromFile(file) {
     statusEl.textContent = 'Processing image...';
     log(`Processing uploaded file: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
     
+    // Show the uploaded image on screen
+    showUploadedImage(file);
+    
     let result = null;
+    let nativeResult = null;
+    
+    // Try native BarcodeDetector first if available
+    if (nativeDetector) {
+      try {
+        const img = await createImageElement(file);
+        const barcodes = await nativeDetector.detect(img);
+        log(`Native detector found ${barcodes.length} barcodes`);
+        
+        if (barcodes && barcodes.length > 0) {
+          // Prefer any barcode that contains an Amazon TBA tracking string
+          let best = barcodes.find(b => /^TBA\d+/i.test((b.rawValue||'').trim()));
+          if (!best) {
+            // Prefer the longest rawValue (often the tracking barcode)
+            best = barcodes.sort((a,b)=> (b.rawValue?.length||0)-(a.rawValue?.length||0))[0];
+          }
+          const text = (best?.rawValue || '').trim();
+          if (text) {
+            log(`Native detector result: "${text}"`);
+            nativeResult = { getText: () => text };
+          }
+        }
+      } catch (nativeErr) {
+        log(`Native detector error: ${nativeErr.message}`);
+      }
+    }
     
     // Try multiple image processing approaches optimized for tracking barcodes
     const imageVariations = [
@@ -459,6 +506,14 @@ async function decodeFromFile(file) {
       () => createCanvasFromFile(file, 1.5), // 150% scale
       () => createCanvasFromFile(file, 1.0), // Original size
       () => createCanvasFromFile(file, 0.75), // 75% scale  
+      () => createBandCanvasFromFile(file, 2.0), // auto-detected barcode band
+      () => createBandCanvasFromFile(file, 1.5), // smaller upscale
+      () => createCroppedCanvas(file, 0.55, 0.35, 2.0), // lower center band, scaled
+      () => createCroppedCanvas(file, 0.35, 0.40, 2.0), // central band
+      () => createAdaptiveThresholdCanvas(file, 12, 10, 2.0), // aggressive local threshold
+      () => createAdaptiveThresholdCanvas(file, 24, 12, 1.5), // larger window
+      () => createAdaptiveThresholdCanvas(file, 12, 10, 1.0), // try without upscale
+      () => createVerticalEnhanceCanvas(file, 2.0), // emphasize vertical bars
       () => createBarcodeOptimizedCanvas(file), // Specialized for barcodes
       () => createEnhancedCanvasFromFile(file, 'highContrast'),
       () => createEnhancedCanvasFromFile(file, 'grayscale'),
@@ -472,38 +527,74 @@ async function decodeFromFile(file) {
     let attemptCount = 0;
     const maxAttempts = imageVariations.length;
     
-    for (let i = 0; i < imageVariations.length && !result; i++) {
-      try {
-        const imageElement = await imageVariations[i]();
-        attemptCount++;
-        log(`Trying image variation ${i + 1}/${imageVariations.length}`);
-        
+    // Only try ZXing variations if native detector didn't find anything
+    if (!nativeResult) {
+      for (let i = 0; i < imageVariations.length && !result; i++) {
         try {
-          result = await codeReader.decodeFromImageElement(imageElement);
-          if (result) {
-            log(`Success with variation ${i + 1}`);
-            break;
+          const imageElement = await imageVariations[i]();
+          attemptCount++;
+          log(`Trying ZXing variation ${i + 1}/${imageVariations.length}`);
+          
+          try {
+            result = await codeReader.decodeFromImageElement(imageElement);
+            if (result) {
+              log(`ZXing success with variation ${i + 1}`);
+              break;
+            }
+          } catch (readerError) {
+            log(`ZXing variation ${i + 1} failed: ${readerError.message}`);
+            
+            // Try with a more permissive reader configuration
+            try {
+              const permissiveReader = new (await import('https://cdn.jsdelivr.net/npm/@zxing/browser@latest/+esm')).BrowserMultiFormatReader();
+              const permissiveHints = new Map();
+              const BarcodeFormat = (await import('https://cdn.jsdelivr.net/npm/@zxing/library@latest/+esm')).BarcodeFormat;
+              const DecodeHintType = (await import('https://cdn.jsdelivr.net/npm/@zxing/library@latest/+esm')).DecodeHintType;
+              
+              permissiveHints.set(DecodeHintType.TRY_HARDER, true);
+              permissiveHints.set(DecodeHintType.PURE_BARCODE, false);
+              permissiveHints.set(DecodeHintType.ALSO_INVERTED, true);
+              permissiveReader.hints = permissiveHints;
+              
+              result = await permissiveReader.decodeFromImageElement(imageElement);
+              if (result) {
+                log(`ZXing success with permissive reader on variation ${i + 1}`);
+                break;
+              }
+            } catch (permissiveError) {
+              log(`ZXing permissive reader also failed on variation ${i + 1}: ${permissiveError.message}`);
+            }
           }
-        } catch (readerError) {
-          log(`Variation ${i + 1} failed: ${readerError.message}`);
+        } catch (imageError) {
+          log(`ZXing image variation ${i + 1} failed: ${imageError.message}`);
         }
-      } catch (imageError) {
-        log(`Image variation ${i + 1} failed: ${imageError.message}`);
       }
+    } else {
+      log('Skipping ZXing variations since native detector found result');
     }
     
-    if (result) {
-      const scannedText = result.getText();
+    // Use native result if available, otherwise ZXing result
+    const finalResult = nativeResult || result;
+    
+    if (finalResult) {
+      const scannedText = finalResult.getText();
       log(`Successfully decoded: "${scannedText}"`);
       
       const tracking = pickTracking(scannedText);
       renderState(scannedText, tracking);
       
-      statusEl.textContent = 'Image processed successfully';
+      statusEl.textContent = 'Image processed successfully - manual crop still available below';
     } else {
-      statusEl.textContent = 'No barcode found in image';
-      log(`Failed to detect barcode after ${attemptCount} attempts`);
-      log('Try taking a clearer photo with better lighting and focus on the barcode');
+      statusEl.textContent = 'No barcode found - use manual crop below';
+      log(`Failed to detect barcode after ${attemptCount} attempts (native: ${!!nativeResult}, zxing: ${!!result})`);
+    }
+    
+    // Always show manual crop UI for uploaded images (whether barcode was found or not)
+    log('Showing manual crop UI for uploaded image');
+    try {
+      showCropUI(file);
+    } catch (cropError) {
+      log(`Error showing crop UI: ${cropError.message}`);
     }
     
   } catch (error) {
@@ -744,6 +835,560 @@ function createInvertedCanvas(file) {
   });
 }
 
+/**
+ * Create a cropped canvas from an image file focusing on a horizontal band
+ * @param {File} file
+ * @param {number} yStartFraction - fraction of image height to start crop (0..1)
+ * @param {number} heightFraction - fraction of image height to include
+ * @param {number} scale - scale multiplier for output canvas
+ */
+function createCroppedCanvas(file, yStartFraction = 0.5, heightFraction = 0.35, scale = 2.0) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const img = await createImageElement(file);
+      const srcW = img.width;
+      const srcH = img.height;
+
+      const cropY = Math.max(0, Math.floor(srcH * yStartFraction));
+      const cropH = Math.min(srcH - cropY, Math.floor(srcH * heightFraction));
+      const cropX = 0; // full width crop (barcode usually spans horizontally)
+      const cropW = srcW;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.floor(cropW * scale);
+      canvas.height = Math.floor(cropH * scale);
+      const ctx = canvas.getContext('2d');
+
+      ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
+      log(`Cropped canvas created: ${canvas.width}x${canvas.height} (yStart:${yStartFraction}, hFrac:${heightFraction}, scale:${scale})`);
+      resolve(canvas);
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+function detectBarcodeBandFromCanvas(srcCanvas, bandFraction = 0.25, upscale = 2.0) {
+  const srcW = srcCanvas.width;
+  const srcH = srcCanvas.height;
+  const ctx = srcCanvas.getContext('2d');
+  const imgData = ctx.getImageData(0, 0, srcW, srcH);
+  const data = imgData.data;
+
+  // Compute luminance for each pixel row-wise and horizontal edge strength per row
+  const rowScores = new Float32Array(srcH);
+  for (let y = 0; y < srcH; y++) {
+    let score = 0;
+    let rowOffset = y * srcW * 4;
+    for (let x = 0; x < srcW - 1; x++) {
+      const i = rowOffset + x * 4;
+      const r = data[i], g = data[i+1], b = data[i+2];
+      const l1 = 0.299 * r + 0.587 * g + 0.114 * b;
+      const j = i + 4;
+      const r2 = data[j], g2 = data[j+1], b2 = data[j+2];
+      const l2 = 0.299 * r2 + 0.587 * g2 + 0.114 * b2;
+      score += Math.abs(l2 - l1);
+    }
+    rowScores[y] = score;
+  }
+
+  // Sliding window to find the vertical-edge-dense band
+  const windowH = Math.max(8, Math.floor(srcH * bandFraction));
+  let bestSum = -1;
+  let bestY = 0;
+  let running = 0;
+  for (let y = 0; y < srcH; y++) {
+    running += rowScores[y] || 0;
+    if (y >= windowH) running -= rowScores[y - windowH] || 0;
+    if (y >= windowH - 1) {
+      const start = y - (windowH - 1);
+      if (running > bestSum) { bestSum = running; bestY = start; }
+    }
+  }
+
+  // Crop and upscale the detected band
+  const cropY = Math.max(0, bestY);
+  const cropH = Math.min(srcH - cropY, windowH);
+  const outW = Math.floor(srcW * upscale);
+  const outH = Math.max(24, Math.floor(cropH * upscale));
+  const out = document.createElement('canvas');
+  out.width = outW;
+  out.height = outH;
+  const outCtx = out.getContext('2d');
+  outCtx.drawImage(srcCanvas, 0, cropY, srcW, cropH, 0, 0, outW, outH);
+  log(`Detected band crop at y=${cropY} h=${cropH} -> ${outW}x${outH}`);
+  return out;
+}
+
+async function createBandCanvasFromFile(file, scale = 2.0) {
+  const base = await createCanvasFromFile(file, scale);
+  return detectBarcodeBandFromCanvas(base, 0.25, Math.max(1.5, scale));
+}
+
+/**
+ * Create an adaptive (local mean) thresholded canvas from the image file.
+ * Uses integral image for fast local mean computation.
+ * @param {File} file
+ * @param {number} window - local window radius in pixels
+ * @param {number} C - constant subtracted from local mean
+ * @param {number} scale - upscale multiplier
+ */
+function createAdaptiveThresholdCanvas(file, window = 16, C = 8, scale = 2.0) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const img = await createImageElement(file);
+      const srcW = Math.max(1, Math.floor(img.width));
+      const srcH = Math.max(1, Math.floor(img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.floor(srcW * scale);
+      canvas.height = Math.floor(srcH * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      const w = canvas.width, h = canvas.height;
+      const imageData = ctx.getImageData(0, 0, w, h);
+      const data = imageData.data;
+
+      // Build integral image of luminance
+      const integral = new Float64Array((w + 1) * (h + 1));
+      for (let y = 1; y <= h; y++) {
+        let rowSum = 0;
+        for (let x = 1; x <= w; x++) {
+          const i = ((y - 1) * w + (x - 1)) * 4;
+          const l = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+          rowSum += l;
+          integral[y * (w + 1) + x] = integral[(y - 1) * (w + 1) + x] + rowSum;
+        }
+      }
+
+      const out = ctx.createImageData(w, h);
+      const outData = out.data;
+      const ws = Math.max(1, Math.floor(window));
+
+      for (let y = 0; y < h; y++) {
+        const y1 = Math.max(0, y - ws);
+        const y2 = Math.min(h - 1, y + ws);
+        for (let x = 0; x < w; x++) {
+          const x1 = Math.max(0, x - ws);
+          const x2 = Math.min(w - 1, x + ws);
+          const A = (y1) * (w + 1) + (x1);
+          const B = (y1) * (w + 1) + (x2 + 1);
+          const Cidx = (y2 + 1) * (w + 1) + (x1);
+          const D = (y2 + 1) * (w + 1) + (x2 + 1);
+          const sum = integral[D] - integral[B] - integral[Cidx] + integral[A];
+          const count = (y2 - y1 + 1) * (x2 - x1 + 1);
+
+          const i = (y * w + x) * 4;
+          const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+          const mean = sum / count;
+          const val = lum < (mean - C) ? 0 : 255;
+          outData[i] = outData[i + 1] = outData[i + 2] = val;
+          outData[i + 3] = 255;
+        }
+      }
+
+      ctx.putImageData(out, 0, 0);
+      log(`Adaptive threshold canvas created: ${canvas.width}x${canvas.height} (window:${window}, C:${C})`);
+      resolve(canvas);
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+/**
+ * Create a canvas emphasizing vertical bar structures using a Sobel X-like filter
+ * which highlights vertical gradients (good for 1D barcodes).
+ * @param {File} file
+ * @param {number} scale
+ */
+function createVerticalEnhanceCanvas(file, scale = 2.0) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const img = await createImageElement(file);
+      const srcW = img.width, srcH = img.height;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.floor(srcW * scale);
+      canvas.height = Math.floor(srcH * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      const w = canvas.width, h = canvas.height;
+      const imageData = ctx.getImageData(0, 0, w, h);
+      const data = imageData.data;
+      const out = ctx.createImageData(w, h);
+      const outData = out.data;
+
+      // Sobel X kernel
+      const k = [ -1, 0, 1,
+                  -2, 0, 2,
+                  -1, 0, 1 ];
+
+      for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+          let gx = 0;
+          let idx = 0;
+          for (let ky = -1; ky <= 1; ky++) {
+            for (let kx = -1; kx <= 1; kx++) {
+              const px = x + kx;
+              const py = y + ky;
+              const i = (py * w + px) * 4;
+              const l = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+              gx += l * k[idx++];
+            }
+          }
+          const mag = Math.min(255, Math.abs(gx));
+          const oi = (y * w + x) * 4;
+          outData[oi] = outData[oi + 1] = outData[oi + 2] = mag;
+          outData[oi + 3] = 255;
+        }
+      }
+
+      // Simple contrast stretch to increase visibility
+      ctx.putImageData(out, 0, 0);
+      // convert to binary with a mid threshold to emphasize bars
+      const binData = ctx.getImageData(0, 0, w, h);
+      const bd = binData.data;
+      for (let i = 0; i < bd.length; i += 4) {
+        const v = bd[i] > 64 ? 255 : 0;
+        bd[i] = bd[i + 1] = bd[i + 2] = v;
+        bd[i + 3] = 255;
+      }
+      ctx.putImageData(binData, 0, 0);
+      log(`Vertical-enhanced canvas created: ${canvas.width}x${canvas.height}`);
+      resolve(canvas);
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
+/**
+ * Show uploaded image on screen
+ * @param {File} imageFile - The uploaded image file
+ */
+function showUploadedImage(imageFile) {
+  const imageDisplay = document.getElementById('imageDisplay');
+  const uploadedImage = document.getElementById('uploadedImage');
+  
+  if (!imageDisplay || !uploadedImage) {
+    log('Image display elements not found');
+    return;
+  }
+  
+  const imageUrl = URL.createObjectURL(imageFile);
+  uploadedImage.src = imageUrl;
+  imageDisplay.classList.remove('hidden');
+  
+  log('Uploaded image displayed on screen');
+  
+  // Clean up old URL when image loads
+  uploadedImage.onload = () => {
+    // Keep the URL active for the crop UI
+  };
+}
+
+/**
+ * Manual Crop UI Implementation
+ */
+let cropCanvas = null;
+let cropSelection = null;
+let cropContainer = null;
+let cropImage = null;
+let cropStartX = 0;
+let cropStartY = 0;
+let cropEndX = 0;
+let cropEndY = 0;
+let isDragging = false;
+
+function initCropUI() {
+  cropCanvas = document.getElementById('cropCanvas');
+  cropSelection = document.getElementById('cropSelection');
+  cropContainer = document.getElementById('cropContainer');
+  
+  const cropScanBtn = document.getElementById('cropScan');
+  const cropResetBtn = document.getElementById('cropReset');
+  const cropCancelBtn = document.getElementById('cropCancel');
+  
+  log(`Crop UI elements found: canvas=${!!cropCanvas}, selection=${!!cropSelection}, container=${!!cropContainer}, scanBtn=${!!cropScanBtn}, resetBtn=${!!cropResetBtn}, cancelBtn=${!!cropCancelBtn}`);
+  
+  if (!cropCanvas || !cropSelection || !cropContainer || !cropScanBtn || !cropResetBtn || !cropCancelBtn) {
+    log('ERROR: Some crop UI elements not found in DOM');
+    return;
+  }
+  
+  // Add mouse event listeners for crop selection
+  cropCanvas.addEventListener('mousedown', startCropSelection);
+  cropCanvas.addEventListener('mousemove', updateCropSelection);
+  cropCanvas.addEventListener('mouseup', finishCropSelection);
+  cropCanvas.addEventListener('mouseleave', finishCropSelection);
+  
+  // Add touch event listeners for mobile
+  cropCanvas.addEventListener('touchstart', handleTouchStart);
+  cropCanvas.addEventListener('touchmove', handleTouchMove);
+  cropCanvas.addEventListener('touchend', handleTouchEnd);
+  
+  cropScanBtn.onclick = scanCroppedArea;
+  cropResetBtn.onclick = resetCropSelection;
+  cropCancelBtn.onclick = hideCropUI;
+  
+  log('Manual crop UI initialized successfully');
+}
+
+function showCropUI(imageFile) {
+  log(`showCropUI called with file: ${imageFile?.name || 'unknown'}`);
+  
+  if (!cropCanvas || !cropContainer) {
+    log('ERROR: Crop UI elements not available');
+    return;
+  }
+  
+  const ctx = cropCanvas.getContext('2d');
+  const img = new Image();
+  
+  img.onload = () => {
+    log(`Image loaded for crop UI: ${img.width}x${img.height}`);
+    
+    // Scale image to fit canvas while preserving aspect ratio
+    const maxWidth = 600;
+    const maxHeight = 400;
+    let { width, height } = img;
+    
+    if (width > maxWidth) {
+      height = (height * maxWidth) / width;
+      width = maxWidth;
+    }
+    if (height > maxHeight) {
+      width = (width * maxHeight) / height;
+      height = maxHeight;
+    }
+    
+    log(`Scaled canvas size: ${width}x${height}`);
+    
+    cropCanvas.width = width;
+    cropCanvas.height = height;
+    cropCanvas.style.maxWidth = '100%';
+    
+    ctx.drawImage(img, 0, 0, width, height);
+    cropImage = img;
+    
+    // Show the crop UI
+    cropContainer.classList.remove('hidden');
+    cropSelection.classList.add('hidden');
+    
+    log('Manual crop UI displayed successfully');
+  };
+  
+  img.onerror = () => {
+    log('ERROR: Failed to load image for crop UI');
+  };
+  
+  const imageUrl = URL.createObjectURL(imageFile);
+  log(`Loading image for crop UI: ${imageUrl}`);
+  img.src = imageUrl;
+}
+
+function resetCropSelection() {
+  if (cropSelection) {
+    cropSelection.classList.add('hidden');
+  }
+  log('Crop selection reset - drag to select new area');
+}
+
+function hideCropUI() {
+  if (cropContainer) {
+    cropContainer.classList.add('hidden');
+  }
+  if (cropSelection) {
+    cropSelection.classList.add('hidden');
+  }
+  // Clean up URL object
+  if (cropImage && cropImage.src) {
+    URL.revokeObjectURL(cropImage.src);
+  }
+  cropImage = null;
+  log('Crop UI hidden');
+}
+
+function startCropSelection(e) {
+  const rect = cropCanvas.getBoundingClientRect();
+  cropStartX = e.clientX - rect.left;
+  cropStartY = e.clientY - rect.top;
+  isDragging = true;
+  
+  cropSelection.classList.add('hidden');
+}
+
+function updateCropSelection(e) {
+  if (!isDragging) return;
+  
+  const rect = cropCanvas.getBoundingClientRect();
+  cropEndX = e.clientX - rect.left;
+  cropEndY = e.clientY - rect.top;
+  
+  updateSelectionRect();
+}
+
+function finishCropSelection() {
+  isDragging = false;
+}
+
+function handleTouchStart(e) {
+  e.preventDefault();
+  const touch = e.touches[0];
+  const rect = cropCanvas.getBoundingClientRect();
+  cropStartX = touch.clientX - rect.left;
+  cropStartY = touch.clientY - rect.top;
+  isDragging = true;
+  
+  cropSelection.classList.add('hidden');
+}
+
+function handleTouchMove(e) {
+  e.preventDefault();
+  if (!isDragging) return;
+  
+  const touch = e.touches[0];
+  const rect = cropCanvas.getBoundingClientRect();
+  cropEndX = touch.clientX - rect.left;
+  cropEndY = touch.clientY - rect.top;
+  
+  updateSelectionRect();
+}
+
+function handleTouchEnd(e) {
+  e.preventDefault();
+  isDragging = false;
+}
+
+function updateSelectionRect() {
+  if (!cropSelection || !cropCanvas) return;
+  
+  const rect = cropCanvas.getBoundingClientRect();
+  
+  const left = Math.min(cropStartX, cropEndX);
+  const top = Math.min(cropStartY, cropEndY);
+  const width = Math.abs(cropEndX - cropStartX);
+  const height = Math.abs(cropEndY - cropStartY);
+  
+  if (width > 10 && height > 10) {
+    cropSelection.style.left = `${left}px`;
+    cropSelection.style.top = `${top}px`;
+    cropSelection.style.width = `${width}px`;
+    cropSelection.style.height = `${height}px`;
+    cropSelection.classList.remove('hidden');
+  }
+}
+
+async function scanCroppedArea() {
+  if (!cropImage || !cropCanvas || cropSelection.classList.contains('hidden')) {
+    log('No crop area selected');
+    return;
+  }
+  
+  try {
+    // Get crop coordinates relative to the original image
+    const canvasRect = cropCanvas.getBoundingClientRect();
+    const scaleX = cropImage.width / cropCanvas.width;
+    const scaleY = cropImage.height / cropCanvas.height;
+    
+    const left = Math.min(cropStartX, cropEndX) * scaleX;
+    const top = Math.min(cropStartY, cropEndY) * scaleY;
+    const width = Math.abs(cropEndX - cropStartX) * scaleX;
+    const height = Math.abs(cropEndY - cropStartY) * scaleY;
+    
+    log(`Cropping area: ${Math.round(left)},${Math.round(top)} ${Math.round(width)}x${Math.round(height)}`);
+    
+    // Create a cropped canvas
+    const croppedCanvas = document.createElement('canvas');
+    const croppedCtx = croppedCanvas.getContext('2d');
+    
+    croppedCanvas.width = width;
+    croppedCanvas.height = height;
+    
+    croppedCtx.drawImage(
+      cropImage,
+      left, top, width, height,
+      0, 0, width, height
+    );
+    
+    // Convert cropped canvas to blob and process it
+    croppedCanvas.toBlob(async (blob) => {
+      if (blob) {
+        log('Processing cropped image...');
+        // Create a File-like object from the blob
+        const croppedFile = new File([blob], 'cropped-image.png', { type: 'image/png' });
+        
+        // Process the cropped image but don't show crop UI again
+        statusEl.textContent = 'Processing cropped area...';
+        
+        try {
+          let result = null;
+          let nativeResult = null;
+          
+          // Try native BarcodeDetector first if available
+          if (nativeDetector) {
+            try {
+              const img = await createImageElement(croppedFile);
+              const barcodes = await nativeDetector.detect(img);
+              log(`Native detector found ${barcodes.length} barcodes in cropped area`);
+              
+              if (barcodes && barcodes.length > 0) {
+                let best = barcodes.find(b => /^TBA\d+/i.test((b.rawValue||'').trim()));
+                if (!best) {
+                  best = barcodes.sort((a,b)=> (b.rawValue?.length||0)-(a.rawValue?.length||0))[0];
+                }
+                const text = (best?.rawValue || '').trim();
+                if (text) {
+                  log(`Native detector result from crop: "${text}"`);
+                  nativeResult = { getText: () => text };
+                }
+              }
+            } catch (nativeErr) {
+              log(`Native detector error on crop: ${nativeErr.message}`);
+            }
+          }
+          
+          // Try ZXing if native didn't work
+          if (!nativeResult) {
+            try {
+              const img = await createImageElement(croppedFile);
+              result = await codeReader.decodeFromImageElement(img);
+              if (result) {
+                log(`ZXing success on cropped area`);
+              }
+            } catch (zxingErr) {
+              log(`ZXing failed on cropped area: ${zxingErr.message}`);
+            }
+          }
+          
+          const finalResult = nativeResult || result;
+          
+          if (finalResult) {
+            const scannedText = finalResult.getText();
+            log(`Successfully decoded from crop: "${scannedText}"`);
+            
+            const tracking = pickTracking(scannedText);
+            renderState(scannedText, tracking);
+            
+            statusEl.textContent = 'Cropped area processed successfully';
+          } else {
+            statusEl.textContent = 'No barcode found in cropped area - try selecting a different area';
+            log('No barcode found in cropped area');
+          }
+          
+        } catch (error) {
+          log(`Cropped area processing error: ${error.message}`);
+          statusEl.textContent = `Error processing cropped area: ${error.message}`;
+        }
+      }
+    }, 'image/png');
+    
+  } catch (error) {
+    log(`Crop scan error: ${error.message}`);
+  }
+}
+
 // Event listeners
 startBtn.onclick = () => startDecoding(camsEl.value);
 stopBtn.onclick = stopDecoding;
@@ -762,6 +1407,15 @@ fileInput.onchange = (e) => {
 
 // Make copyToClipboard available globally for button onclick
 window.copyToClipboard = copyToClipboard;
+
+// Test DOM elements before initialization
+log('=== DOM Element Check ===');
+log(`cropContainer exists: ${!!document.getElementById('cropContainer')}`);
+log(`cropCanvas exists: ${!!document.getElementById('cropCanvas')}`);
+log(`cropSelection exists: ${!!document.getElementById('cropSelection')}`);
+log(`cropScan button exists: ${!!document.getElementById('cropScan')}`);
+log(`cropCancel button exists: ${!!document.getElementById('cropCancel')}`);
+log('=== Starting Initialization ===');
 
 // Initialize everything
 initScanner();
