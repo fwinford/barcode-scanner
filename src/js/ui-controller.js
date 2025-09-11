@@ -24,20 +24,42 @@ export class UIController {
   showResult(result) {
     if (!this.resultEl) return;
     this.resultEl.classList.remove('hidden');
+
+    const rawText = (result && result.text) ? result.text : '';
+    const tracking = (result && result.tracking) ? result.tracking : null;
+
+    const trackingHtml = tracking ? `
+          <div class="result-title"><span class="icon-package"></span><strong>${tracking.carrier} Tracking Number:</strong></div>
+          <div class="result-value" id="resultTrackingValue">${tracking.number}</div>
+          <button class="copy-btn" id="copyTrackingBtn"><span class="icon-copy"></span>Copy Tracking</button>
+        ` : '';
+
+    const rawHtml = `
+        <div class="result-title"><strong>Scanned Raw Text:</strong></div>
+        <div class="result-value" id="resultRawValue">${rawText}</div>
+        <button class="copy-btn" id="copyRawBtn"><span class="icon-copy"></span>Copy Raw Text</button>
+    `;
+
     this.resultEl.innerHTML = `
       <div class="result-content">
         <div class="result-text">
-          <div class="result-title"><span class="icon-package"></span><strong>${result.tracking.carrier} Tracking Number:</strong></div>
-          <div class="result-value">${result.tracking.number}</div>
+          ${trackingHtml}
+          ${rawHtml}
         </div>
-        <button class="copy-btn" onclick="navigator.clipboard.writeText('${result.tracking.number}')">
-          <span class="icon-copy"></span>Copy
-        </button>
       </div>
     `;
-    
-    // Auto-copy to clipboard
-    this.copyToClipboard(result.tracking.number);
+
+    // Attach copy handlers
+    const copyRawBtn = document.getElementById('copyRawBtn');
+    if (copyRawBtn) copyRawBtn.addEventListener('click', () => this.copyToClipboard(rawText));
+
+    const copyTrackingBtn = document.getElementById('copyTrackingBtn');
+    if (copyTrackingBtn && tracking) copyTrackingBtn.addEventListener('click', () => this.copyToClipboard(tracking.number));
+
+    // Auto-copy tracking number if available, otherwise don't auto-copy raw text
+    if (tracking) {
+      this.copyToClipboard(tracking.number);
+    }
   }
 
   async copyToClipboard(text) {

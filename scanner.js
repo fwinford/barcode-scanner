@@ -62,36 +62,62 @@ async function ensureVideoPlays(el){
  */
 function pickTracking(text) {
   log(`Analyzing scanned text: "${text}"`);
-  
-  // Try original text first
-  for (const [carrier, pattern] of Object.entries(trackingPatterns)) {
-    const match = text.match(pattern);
-    if (match) {
-      return { carrier, number: match[0] };
+  if (!text) return null;
+
+  // Debug bytes
+  try { log('Text bytes: ' + Array.from(text).map(c => c.charCodeAt(0)).join(' ')); } catch (e) {}
+
+  // 1) Handle Group Separator (ASCII 29) and other control characters first
+  const GS = String.fromCharCode(29);
+  if (text.indexOf(GS) !== -1) {
+    const parts = text.split(GS).map(p => p.replace(/\s+/g, ''));
+    const last = parts[parts.length - 1];
+    if (last && /^\d{20,30}$/.test(last)) {
+      log('Found numeric tracking in GS last part: ' + last);
+      return { carrier: 'USPS', number: last };
     }
   }
-  
-  // Try with spaces removed
-  const clean = text.replace(/\s+/g, '');
-  for (const [carrier, pattern] of Object.entries(trackingPatterns)) {
-    const match = clean.match(pattern);
-    if (match) {
-      return { carrier, number: match[0] };
+
+  // 2) Normalize control characters to spaces for other checks
+  const normalized = text.replace(/\x1D/g, ' ').replace(/[\u0000-\u001F\u007F]/g, ' ');
+  const digitsOnly = normalized.replace(/\s+/g, '');
+
+  // 3) Look for embedded USPS-style long numbers (e.g., 92 + 24 digits -> 26 total)
+  const embeddedUSPS = [/(92\d{24})/, /(92\d{19,25})/, /(94\d{20,22})/, /(93\d{20,22})/, /(91\d{20,22})/, /(9\d{21,25})/];
+  for (const candidate of [text, normalized, digitsOnly]) {
+    for (const p of embeddedUSPS) {
+      const m = candidate.match(p);
+      if (m) {
+        const num = m[1] || m[0];
+        log('Embedded USPS matched: ' + num);
+        return { carrier: 'USPS', number: num };
+      }
     }
   }
-  
-  // Special handling for USPS format like "9200 1903 4784 2230 0221 1616 74"
-  const uspsSpaced = text.match(/(\d{4}\s+\d{4}\s+\d{4}\s+\d{4}\s+\d{4}\s+\d{4}\s+\d{2})/);
+
+  // 4) Existing checks: try original, then no-spaces version, then spaced USPS pattern, then long numeric
+  for (const source of [text, digitsOnly]) {
+    for (const [carrier, pattern] of Object.entries(trackingPatterns)) {
+      const match = source.match(pattern);
+      if (match) {
+        log(`Matched ${carrier} pattern: ${match[0]}`);
+        return { carrier, number: match[0] };
+      }
+    }
+  }
+
+  const uspsSpaced = normalized.match(/(\d{4}\s+\d{4}\s+\d{4}\s+\d{4}\s+\d{4}\s+\d{4}\s+\d{2})/);
   if (uspsSpaced) {
-    return { carrier: 'USPS', number: uspsSpaced[1] };
+    log('Matched USPS spaced pattern: ' + uspsSpaced[1]);
+    return { carrier: 'USPS', number: uspsSpaced[1].replace(/\s+/g, '') };
   }
-  
-  // Look for any long number sequence that might be a tracking number
-  const longNumber = text.match(/(\d{20,22})/);
+
+  const longNumber = normalized.match(/(\d{20,30})/);
   if (longNumber) {
+    log('Long numeric sequence matched: ' + longNumber[1]);
     return { carrier: 'USPS', number: longNumber[1] };
   }
-  
+
   log(`No tracking pattern matched for: "${text}"`);
   return null;
 }

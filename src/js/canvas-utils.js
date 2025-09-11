@@ -88,4 +88,33 @@ export class CanvasUtils {
     ctx.drawImage(sourceCanvas, cropData.x, cropData.y, cropData.width, cropData.height, 0, 0, cropData.width, cropData.height);
     return out;
   }
+
+  // Create a high-resolution canvas suitable for native BarcodeDetector (doesn't affect visible preview)
+  createDetectionCanvasFromCanvas(sourceCanvas, scale = Math.max(2, window.devicePixelRatio || 1)) {
+    const out = document.createElement('canvas');
+    out.width = Math.round(sourceCanvas.width * scale);
+    out.height = Math.round(sourceCanvas.height * scale);
+    const ctx = out.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    // Draw source into upscaled target to preserve barcode line sharpness
+    ctx.drawImage(sourceCanvas, 0, 0, sourceCanvas.width, sourceCanvas.height, 0, 0, out.width, out.height);
+    return out;
+  }
+
+  // Create a high-resolution canvas snapshot from a video element for detection
+  createDetectionCanvasFromVideo(videoEl, scale = Math.max(2, window.devicePixelRatio || 1)) {
+    const w = videoEl.videoWidth || videoEl.clientWidth || 640;
+    const h = videoEl.videoHeight || videoEl.clientHeight || 480;
+    const out = document.createElement('canvas');
+    out.width = Math.round(w * scale);
+    out.height = Math.round(h * scale);
+    const ctx = out.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    try {
+      ctx.drawImage(videoEl, 0, 0, w, h, 0, 0, out.width, out.height);
+    } catch (e) {
+      console.error('createDetectionCanvasFromVideo drawImage failed', e);
+    }
+    return out;
+  }
 }

@@ -228,15 +228,60 @@ class ScannerApp {
         const result = await this.scanner.scanFromVideo(video);
         if (result && result.text) {
           this.ui.log(`Live attempt ${attempt}: detected text ${result.text}`);
-          if (result.tracking) {
-            this.ui.log(`Auto-detected tracking number: ${result.tracking.number}`);
+
+          // If scanner already provided a parsed tracking, use it; otherwise try to extract
+          let tracking = result.tracking || null;
+          if (!tracking && result.text) {
+            try {
+              // NEW: explicit debug logging to ensure extractTrackingNumber is invoked in runtime
+              console.log('Calling extractTrackingNumber from startLiveScanLoop with text:', result.text);
+              try {
+                const bytes = Array.from(result.text).map(c => c.charCodeAt(0)).join(' ');
+                console.log('Calling extractTrackingNumber - text bytes:', bytes);
+              } catch (bErr) { /* ignore */ }
+
+              tracking = this.scanner.extractTrackingNumber(result.text);
+              console.log('extractTrackingNumber returned:', tracking);
+
+              // FALLBACK: if scanner returned null, attempt simple GS-based extraction here
+              if (!tracking && result.text) {
+                try {
+                  const GS = String.fromCharCode(29);
+                  if (result.text.indexOf(GS) !== -1) {
+                    const parts = result.text.split(GS).map(p => p.replace(/\s+/g, ''));
+                    const last = parts[parts.length - 1];
+                    if (last && /^\d{20,30}$/.test(last)) {
+                      tracking = { carrier: 'USPS', number: last };
+                      console.log('Fallback GS extraction found tracking:', tracking);
+                    }
+                  }
+                } catch (gsErr) { console.log('GS fallback error:', gsErr.message); }
+              }
+
+              if (tracking) this.ui.log(`Extracted tracking from detected text: ${tracking.number}`);
+            } catch (e) {
+              this.ui.log('Error extracting tracking from text: ' + e.message);
+            }
+          }
+
+          // If we have text but no tracking, show it anyway
+          if (result.text) {
             const canvas = document.getElementById('previewCanvas');
             this.canvasUtils.captureVideoFrame(video, canvas);
+
+            // Switch to static preview and stop live scanning
             video.classList.add('hidden');
             canvas.classList.remove('hidden');
             this.stateMachine.setState('static-preview');
+
+            // Enable manual crop for the captured frame
             this.setupCropInteraction(canvas, document.getElementById('cropOverlay'));
-            this.handleScanResult(result);
+
+            // Build unified result object preserving raw text and parsed tracking
+            const unified = { text: result.text, tracking };
+            this.handleScanResult(unified);
+
+            // stop camera stream
             this.scanner.stopCamera();
             this._liveScanActive = false;
             break;
@@ -293,6 +338,17 @@ class ScannerApp {
   }
 
   handleScanResult(result) {
+    // Debug logging to see what we're getting
+    console.log('🔍 handleScanResult called with:', result);
+    if (result) {
+      console.log('  - text:', result.text);
+      console.log('  - tracking:', result.tracking);
+      if (result.tracking) {
+        console.log('  - tracking.carrier:', result.tracking.carrier);
+        console.log('  - tracking.number:', result.tracking.number);
+      }
+    }
+
     if (result && result.tracking) {
       this.ui.showResult(result);
       this.ui.updateStatus(`Found ${result.tracking.carrier} tracking number - drag to select different area if needed`);
