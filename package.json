@@ -2,10 +2,12 @@
   "name": "scanner",
   "version": "0.1.0",
   "description": "Package tracking barcode scanner (ZXing + BarcodeDetector)",
+  "homepage": "https://fwinford.github.io/barcode-scanner",
   "main": "scan.html",
   "scripts": {
-    "start": "http-server -p 8001",
-    "serve": "http-server -p 8001"
+    "start": "npx http-server -p 8001 --silent & sleep 0.5 && open http://localhost:8001/index.html",
+    "serve": "npx http-server -p 8001",
+    "deploy": "echo 'Install gh-pages and set up deploy script to use gh-pages'"
   },
   "author": "",
   "license": "MIT",
