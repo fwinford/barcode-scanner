@@ -1,0 +1,15 @@
+{
+  "name": "scanner",
+  "version": "0.1.0",
+  "description": "Package tracking barcode scanner (ZXing + BarcodeDetector)",
+  "main": "scan.html",
+  "scripts": {
+    "start": "http-server -p 8001",
+    "serve": "http-server -p 8001"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  }
+}

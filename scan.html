@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Package Tracking Scanner</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <div class="container">
+      <h1><span class="icon-package"></span>Package Tracking Scanner</h1>
+      
+      <div id="status">Loading...</div>
+      
+      <div class="input-group">
+        <label for="cams"><span class="icon-camera"></span>Select Camera (iPhone via Continuity Camera):</label>
+        <select id="cams">
+          <option>Loading cameras...</option>
+        </select>
+      </div>
+      
+      <div class="button-group">
+        <button id="startBtn" disabled><span class="icon-camera"></span>Start Camera</button>
+        <button id="stopBtn" class="secondary" disabled>Stop Camera</button>
+      </div>
+      
+      <div class="file-input-wrapper">
+        <input type="file" id="fileInput" accept="image/*" capture="environment">
+        <div class="file-input-label">
+          <span class="icon-upload"></span>Upload Image from iPhone
+        </div>
+      </div>
+      
+      <div class="video-container">
+        <video id="preview" playsinline muted></video>
+      </div>
+      
+      <div id="result" class="hidden"></div>
+      
+      <details>
+        <summary><span class="icon-bug"></span>Debug Log</summary>
+        <div id="debug"></div>
+      </details>
+    </div>
+    
+    <script type="module" src="scanner.js"></script>
+  </body>
+</html>
