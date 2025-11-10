@@ -177,22 +177,23 @@ select:hover, input[type="file"]:hover {
 .button-group {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 1rem;
+  gap: 0.75rem;
 }
 
+/* Calm, flat buttons with softer shadow and no motion */
 button {
-  background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+  background: var(--primary);
   color: white;
   border: none;
-  padding: 1rem 1.5rem;
-  font-size: 1rem;
+  padding: 0.85rem 1.25rem;
+  font-size: 0.98rem;
   font-weight: 600;
-  border-radius: var(--border-radius-sm);
+  border-radius: 12px;
   cursor: pointer;
-  transition: var(--transition-fast);
+  transition: background-color 0.12s ease, box-shadow 0.12s ease;
   position: relative;
   overflow: hidden;
-  box-shadow: var(--shadow);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.06);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -200,27 +201,27 @@ button {
 }
 
 button:hover:not(:disabled) {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-lg);
+  background: var(--primary-dark);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.08);
 }
 
 button:active:not(:disabled) {
-  transform: translateY(0);
+  transform: none;
 }
 
 button:disabled {
-  background: var(--gray-300);
+  background: var(--gray-200);
+  color: var(--gray-500);
   cursor: not-allowed;
-  transform: none;
-  box-shadow: var(--shadow-sm);
-  opacity: 0.7;
+  box-shadow: none;
+  opacity: 0.85;
 }
 
 button.secondary {
   background: white;
   color: var(--gray-700);
-  border: 2px solid var(--gray-200);
-  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--gray-200);
+  box-shadow: none;
 }
 
 button.secondary:hover:not(:disabled) {
@@ -249,24 +250,24 @@ input[type="file"] {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.75rem;
-  padding: 1.25rem 2rem;
-  background: linear-gradient(135deg, #17a2b8, #138496);
+  gap: 0.6rem;
+  padding: 1rem 1.5rem;
+  background: #17a2b8;
   color: white;
-  border-radius: var(--border-radius-sm);
+  border-radius: 12px;
   cursor: pointer;
   font-weight: 600;
-  font-size: 1.1rem;
-  transition: var(--transition);
+  font-size: 1rem;
+  transition: background-color 0.12s ease, box-shadow 0.12s ease;
   border: none;
-  box-shadow: var(--shadow);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.06);
   position: relative;
   z-index: 1;
 }
 
 .file-input-label:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-lg);
+  background: #138496;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.08);
 }
 
 /* Preview Area - Fixed dimensions for consistency */
@@ -314,34 +315,9 @@ input[type="file"] {
   box-shadow: var(--shadow);
 }
 
-#preview.scanning {
-  border-color: var(--success);
-  box-shadow: 0 0 30px rgba(52, 199, 89, 0.4);
-  animation: scanningPulse 2s infinite;
-}
+/* Removed intense scanning animation to keep UI calm */
 
-@keyframes scanningPulse {
-  0%, 100% { box-shadow: 0 0 30px rgba(52, 199, 89, 0.4); }
-  50% { box-shadow: 0 0 50px rgba(52, 199, 89, 0.6); }
-}
-
-/* File Input */
-.file-input-wrapper {
-  position: relative;
-  display: block;
-  width: 100%;
-  margin: 0;
-}
-
-.file-input-wrapper input[type="file"] {
-  width: 100%;
-  padding: 1rem;
-  font-size: 1rem;
-  border: 2px solid var(--gray-200);
-  border-radius: var(--border-radius-sm);
-  background: white;
-  transition: var(--transition-fast);
-}
+/* File Input - consolidated above */
 
 /* Image Display */
 .image-display {
@@ -725,33 +701,7 @@ summary:hover {
 }
 
 /* Animations */
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.8;
-  }
-}
-
-#result {
-  animation: fadeIn 0.3s ease;
-}
-
-.scanning {
-  animation: pulse 2s infinite;
-}
+/* Animations removed for a more relaxed UI */
 
 /* Manual Crop UI - simplified for better UX */
 
@@ -838,13 +788,4 @@ summary:hover {
   text-align: center;
 }
 
-/* Success feedback animation */
-@keyframes successFlash {
-  0% { background-color: var(--success-bg); }
-  50% { background-color: var(--success); }
-  100% { background-color: var(--success-bg); }
-}
-
-.success-flash {
-  animation: successFlash 0.6s ease;
-}
+/* Removed success flash animation for calmer feedback */

@@ -5,8 +5,9 @@
   "homepage": "https://fwinford.github.io/barcode-scanner",
   "main": "scan.html",
   "scripts": {
-    "start": "npx http-server -p 8001 --silent & sleep 0.5 && open http://localhost:8001/index.html",
-    "serve": "npx http-server -p 8001",
+  "start": "npx http-server -p 8001 --silent & sleep 0.5 && open http://localhost:8001/scan.html",
+  "serve": "npx http-server -p 8001",
+  "dev": "npx http-server -p 8001 --silent",
     "deploy": "echo 'Install gh-pages and set up deploy script to use gh-pages'"
   },
   "author": "",

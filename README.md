@@ -31,7 +31,7 @@ A clean, modular barcode scanner implementation following the requirements from 
 
 ## Quick local preview
 1. From the project folder: `python3 -m http.server 8003`
-2. Open http://localhost:8003/scan.html in a browser with camera accessracking Barcode Scanner
+2. Open http://localhost:8003/scan.html in a browser with camera access
 
 This is a small static web app that uses ZXing and the browser BarcodeDetector (when available) to scan package tracking barcodes from a camera (including iPhone Continuity Camera) or uploaded images.
 
